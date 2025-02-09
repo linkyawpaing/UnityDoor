@@ -9,10 +9,12 @@ public class PlayerController : MonoBehaviour
     Rigidbody2D rb;
     float MoveInput;
     float Speed;
-    float JumpForce;
+    public float jumpForce;
+    public float jumpHoldForce;
+    public float jumpHoldDuration;
+    public float coyoteTime;
+    private float coyoteTimeCounter;
     int JumpCountValue;
-    int JumpCount;
-    float JumpTime;
     float JumpTimeCounter;
     bool IsGrounded;
     bool IsAir;
@@ -70,8 +72,6 @@ public class PlayerController : MonoBehaviour
     float LeftRotation;
 
 
-    float AirTime;
-    float AirTimeStart = 0;
 
     public ParticleSystem DustJump;
     public ParticleSystem DashEffect;
@@ -79,11 +79,17 @@ public class PlayerController : MonoBehaviour
     public bool IsTouchingFront;
     public bool IsTouchingBack;
     public Transform FrontCheck;
-    public bool WallSliding;
+    public bool IsWallSliding;
+    public bool IsWallJumping;
     public float WallSlidingSpeed;
-    bool IsWallJumping;
-    float XWallForce;
-    float YWallForce;
+
+    public float WallJumpingCounter;
+    public float WallJumpingTime = 0.2f;
+
+    private Vector2 WallJumpingPower = new Vector2(8f, 160f);
+    private PlayerInputScript playerInput;
+    bool isreleased;
+
     void Awake()
     {
         bc = GetComponent<CapsuleCollider2D>();
@@ -92,7 +98,6 @@ public class PlayerController : MonoBehaviour
         hj = GetComponent<HingeJoint2D>();
         //box.GetComponent<FixedJoint2D>().enabled = false;
         Speed = 500f;
-        JumpCount = JumpCountValue;
 
         wp.enabled = false;
         DashTime = StartDashTime;
@@ -100,32 +105,260 @@ public class PlayerController : MonoBehaviour
         AfterDash = true;
         IsAttach = false;
         collided = false;
-        //AirTimeStart = 0.5f;
-        AirTime = AirTimeStart;
-        JumpForce = 18f;
         IsAir = false;
-        JumpTime = 0.4f;
         IsTouchingFront = false;
         IsTouchingBack = false;
         WallSlidingSpeed = 20f;
-
-
-
+        playerInput = GetComponent<PlayerInputScript>();
         /*RightRotation = Mathf.Clamp(RightRotation, 90, -90);
         LeftRotation = Mathf.Clamp(RightRotation, 90, -90);*/
+        isreleased = false;
     }
 
     // Update is called once per frame
     void FixedUpdate()
     {
-        Movement();
+    }
+    void Update()
+    {
+        AirControl();
+        WallSliding();
         WallJumping();
         Wepon();
-        PushPull();
         Dash();
-        AirControl();
         RopeClime();
+        Movement();
+        PushPull();
+    }
+    public void Movement()
+    {
 
+        RayHit = Physics2D.BoxCast(bc.bounds.center, new Vector2(1f, 2.3f), 0f, Vector2.down, 0.1f, WhatIsGround);
+        float MoveInput = playerInput.MoveInput;
+        if (RayHit.collider)
+        {
+            IsGrounded = true;
+            coyoteTimeCounter = coyoteTime;
+            isreleased = false;
+        }
+        else
+        {
+            IsGrounded = false;
+        }
+        if ((MoveInput < 0 || MoveInput > 0) && !IsAttach && IsGrounded && !IsDashing && WeaponCoolDown < 0 && !IsWallSliding)
+        {
+            rb.velocity = new Vector2(MoveInput * Speed * Time.fixedDeltaTime, rb.velocity.y * Time.fixedDeltaTime);
+            // rb.AddForce(new Vector2(MoveInput * 400 * Time.deltaTime,0f),ForceMode2D.Impulse);
+            // this.transform.Translate(MoveInput * Speed * Time.deltaTime, 0f,0f);
+            ani.SetBool("Walking", true);
+        }
+        else if (MoveInput == 0 && !IsAttach && !IsDashing && IsGrounded && WeaponCoolDown < 0)
+        {
+            rb.velocity = new Vector2(0, rb.velocity.y * Time.fixedDeltaTime);
+            ani.SetBool("Walking", false);
+        }
+
+
+        if (transform.localScale.x == -1)
+        {
+            facingRight = false;
+        }
+        if (transform.localScale.x == 1)
+        {
+
+            facingRight = true;
+        }
+
+
+        if (facingRight == false && MoveInput > 0 && !IsPushing && !IsDashing && !IsAttach)
+        {
+
+            Flip();
+        }
+        else if (facingRight == true && MoveInput < 0 && !IsPushing && !IsDashing && !IsAttach)
+        {
+
+            Flip();
+        }
+
+        if (playerInput.IsJumping && IsGrounded && !IsAir && coyoteTimeCounter > 0 && !isreleased && (!IsWallSliding || !IsWallJumping))
+        {
+            IsAir = true;
+            JumpTimeCounter = jumpHoldDuration;
+            rb.velocity = new Vector2(rb.velocity.x, jumpForce);
+
+        }
+        if (playerInput.IsReleaseing)
+        {
+            isreleased = true;
+        }
+        if (playerInput.IsPressing && IsAir && !isreleased && (!IsWallSliding || !IsWallJumping))
+        {
+            //rb.velocity = new Vector2(rb.velocity.x, rb.velocity.y);
+            //rb.AddForce(Vector2.up * JumpForce * Time.deltaTime, ForceMode2D.Force);
+            if (JumpTimeCounter > 0 && playerInput.IsPressing)
+            {
+                rb.velocity = new Vector2(rb.velocity.x, jumpHoldForce);
+                JumpTimeCounter -= Time.deltaTime;
+            }
+            else
+            {
+                IsAir = false;
+            }
+        }
+
+        if (!IsGrounded)
+        {
+            coyoteTimeCounter -= Time.deltaTime;
+        }
+
+
+        Debug.Log(JumpTimeCounter);
+
+        ani.SetBool("IsGrounded", IsGrounded);
+
+
+        if ((rb.velocity.y < 0) && !IsAttach)
+        {
+            rb.gravityScale = fullGravity + 2f;
+            //rb.velocity = new Vector2(rb.velocity.x, Mathf.Max(rb.velocity.y, -50f));
+            //rb.velocity += Vector2.up * Physics2D.gravity.y * (fullGravity + 2f) * Time.fixedDeltaTime;
+            //rb.velocity = new Vector2(rb.velocity.x, Mathf.Max(rb.velocity.y, -50f));
+            ani.SetBool("Up", false);
+        }
+        if (rb.velocity.y > 0.2 && !IsAttach)
+        {
+            rb.gravityScale = fullGravity;
+            // rb.velocity += Vector2.up * Physics2D.gravity.y * (fullGravity) * Time.fixedDeltaTime;
+            ani.SetBool("Up", true);
+        }
+
+        if (!IsAttach)
+        {
+            transform.rotation = Quaternion.Euler(0, 0, 0);
+        }
+        if (rb.velocity.y < -Mathf.Abs(50))
+        {
+            rb.velocity = new Vector2(rb.velocity.x, Mathf.Clamp(rb.velocity.y, -Mathf.Abs(50), Mathf.Infinity));
+        }
+        /* else if(IsAttach && facingRight)
+         {
+            // Rotation = Mathf.Clamp(Rotation, 15, -40);
+             transform.rotation = Quaternion.Euler(new Vector3(transform.eulerAngles.x, transform.eulerAngles.y, RightRotation));
+         }
+         else if (IsAttach && !facingRight)
+         {
+
+             transform.rotation = Quaternion.Euler(new Vector3(transform.eulerAngles.x, transform.eulerAngles.y, RightRotation));
+         }*/
+
+
+    }
+
+    private void AirControl()
+    {
+        float MoveInput = playerInput.MoveInput;
+        /* if (!IsGrounded && facingRight && MoveInput > 0 && !IsAttach)
+         {
+             rb.velocity = new Vector2(1 * 1000 * Time.deltaTime, rb.velocity.y);
+         }
+         if (!IsGrounded && !facingRight && MoveInput > 0 && !IsAttach)
+         {
+             rb.velocity = new Vector2(1 * 150 * Time.deltaTime, rb.velocity.y);
+         }
+         if (!IsGrounded && !facingRight && MoveInput < 0 && !IsAttach)
+         {
+                 rb.velocity = new Vector2(-1 * 1000 * Time.deltaTime, rb.velocity.y);
+         }
+         if (!IsGrounded && facingRight && MoveInput < 0 && !IsAttach)
+         {
+             rb.velocity = new Vector2(-1 * 150 * Time.deltaTime, rb.velocity.y);
+         }*/
+        if (!IsGrounded && (MoveInput > 0 || MoveInput < 0) && !IsAttach )
+        {
+            rb.velocity = new Vector2(MoveInput * Speed * Time.fixedDeltaTime, rb.velocity.y);
+        }
+        if (IsAttach && MoveInput > 0 && playerInput.IsJumping && facingRight)
+        {
+            rb.velocity = new Vector2(MoveInput * Speed * Time.fixedDeltaTime, rb.velocity.y);
+            //rb.AddForce(Vector2.up * JumpForce, ForceMode2D.Impulse);
+
+            Detach();
+        }
+        if (IsAttach && MoveInput > 0 && playerInput.IsJumping && !facingRight)
+        {
+            rb.velocity = new Vector2(MoveInput * Speed * Time.fixedDeltaTime, rb.velocity.y);
+            //rb.AddForce(Vector2.up * JumpForce, ForceMode2D.Impulse);
+
+            //Flip();
+            Detach();
+        }
+        if (IsAttach && MoveInput < 0 && playerInput.IsJumping && !facingRight)
+        {
+            rb.velocity = new Vector2(MoveInput * Speed * Time.fixedDeltaTime, rb.velocity.y);
+            //rb.AddForce(Vector2.up * JumpForce, ForceMode2D.Impulse);
+
+            Detach();
+        }
+        if (IsAttach && MoveInput < 0 && playerInput.IsJumping && facingRight)
+        {
+            rb.velocity = new Vector2(MoveInput * Speed * Time.fixedDeltaTime, rb.velocity.y);
+            //rb.AddForce(Vector2.up * JumpForce, ForceMode2D.Impulse);
+
+            //Flip();
+            Detach();
+        }
+
+    }
+    public void WallSliding()
+    {
+        WallRayHit1 = Physics2D.Raycast(transform.position, Vector2.right * (transform.localScale.x * 0.5f), 0.5f, WhatIsGround);
+        if (WallRayHit1.collider)
+        {
+            IsWallSliding = true;
+            rb.velocity = new Vector2(rb.velocity.x, Mathf.Clamp(rb.velocity.y, -4f, float.MaxValue));
+
+            CancelInvoke(nameof(StopWallJumping));
+        }
+        else
+        {
+            IsWallSliding = false;
+        }
+    }
+    public void WallJumping()
+    {
+        float MoveInput = playerInput.MoveInput;
+        WallRayHit2 = Physics2D.Raycast(transform.position, Vector2.left * (transform.localScale.x * 0.5f), 4f, WhatIsGround);
+        IsTouchingBack = WallRayHit2.collider;
+        if(IsWallSliding)
+        {
+            IsWallJumping = false;
+            WallJumpingCounter = WallJumpingTime;
+        }
+        else{
+            WallJumpingCounter -= Time.deltaTime;
+        }
+
+        if( playerInput.isJumping && WallJumpingCounter > 0f && (WallRayHit1 || WallRayHit2))
+        {
+            IsWallJumping = true;
+            rb.velocity = new Vector2(rb.velocity.x , jumpForce);
+        }
+        else if( playerInput.isJumping && WallJumpingCounter > 0f && !facingRight && MoveInput > 0 && (WallRayHit1 || WallRayHit2))
+        {
+            IsWallJumping = true;
+            rb.velocity = new Vector2(30f , jumpForce);
+        }
+        else if( playerInput.isJumping && WallJumpingCounter > 0f && facingRight && MoveInput < 0 && (WallRayHit1 || WallRayHit2))
+        {
+            IsWallJumping = true;
+            rb.velocity = new Vector2(-30f , jumpForce);
+        }
+        Invoke(nameof(StopWallJumping), 0.4f);
+    }
+    private void StopWallJumping()
+    {
+        IsWallJumping = false;
     }
     public void RopeClime()
     {
@@ -134,6 +367,7 @@ public class PlayerController : MonoBehaviour
     public void CheckKeyBoardInput()
     {
         RopeHit = Physics2D.Raycast(transform.position, Vector2.right * (transform.localScale.x * 0.5f), 0.5f, WhatIsRope);
+        float MoveInput = playerInput.MoveInput;
 
         if (Input.GetKey("a") && IsAttach)
         {
@@ -172,7 +406,7 @@ public class PlayerController : MonoBehaviour
             Attach();
 
         }
-        else if (IsAttach && Input.GetKeyDown(KeyCode.Space))
+        else if (IsAttach && playerInput.IsJumping)
         {
             Detach();
             IsAttach = false;
@@ -339,254 +573,7 @@ public class PlayerController : MonoBehaviour
             // rb.AddForce(new Vector2(200, 0), ForceMode2D.Impulse);
         }
     }
-    public void WallJumping()
-    {
-        WallRayHit1 = Physics2D.Raycast(transform.position, Vector2.right * (transform.localScale.x * 0.5f), 0.5f, WhatIsGround);
-        WallRayHit2 = Physics2D.Raycast(transform.position, Vector2.left * (transform.localScale.x * 0.5f), 4f, WhatIsGround);
-        IsTouchingFront = WallRayHit1.collider;
-        IsTouchingBack = WallRayHit2.collider;
-        if (IsTouchingFront && !IsGrounded)
-        {
-            rb.velocity += Vector2.up * Physics2D.gravity.y * (fullGravity-4f) * Time.deltaTime;
-        }
-     
-        
-    }
-    public void Movement()
-    {
-
-
-        RayHit = Physics2D.BoxCast(bc.bounds.center, new Vector2(1f,2.3f), 0f, Vector2.down, 0.1f, WhatIsGround);
-        MoveInput = Input.GetAxis("Horizontal");
-        IsGrounded = RayHit.collider;
-        if ((MoveInput < 0 || MoveInput > 0) && !IsAttach && IsGrounded && !IsDashing && WeaponCoolDown <0 && !IsAir)
-        {
-             rb.velocity = new Vector2(MoveInput * Speed * Time.fixedDeltaTime, rb.velocity.y * Time.fixedDeltaTime);
-           // rb.AddForce(new Vector2(MoveInput * 400 * Time.deltaTime,0f),ForceMode2D.Impulse);
-           // this.transform.Translate(MoveInput * Speed * Time.deltaTime, 0f,0f);
-            ani.SetBool("Walking", true);
-        }
-        else if (MoveInput == 0 && !IsAttach && !IsDashing && IsGrounded && WeaponCoolDown < 0)
-        {
-            rb.velocity = new Vector2(0, rb.velocity.y * Time.deltaTime);
-            ani.SetBool("Walking", false);
-        }
-        
-       
-        if (transform.localScale.x == -1)
-        {
-            facingRight = false;
-        }
-        if (transform.localScale.x == 1)
-        {
-
-            facingRight = true;
-        }
-
-
-        if (facingRight == false && MoveInput > 0 && !IsPushing  && !IsDashing && !IsAttach)
-        {
-
-            Flip();
-        }
-        else if (facingRight == true && MoveInput < 0 && !IsPushing  && !IsDashing && !IsAttach)
-        {
-
-            Flip();
-        }
-
-
-        if (Input.GetKeyDown(KeyCode.Space) && (IsGrounded && !IsTouchingFront) && !IsAir)
-        {
-            //rb.velocity = new Vector2(rb.velocity.x, rb.velocity.y);
-            //rb.AddForce(Vector2.up * JumpForce * Time.deltaTime, ForceMode2D.Force);
-            rb.velocity = new Vector2(rb.velocity.x, JumpForce);
-            IsAir = true;
-
-        }
-        if (Input.GetKeyDown(KeyCode.Space) && (IsTouchingFront))
-        {
-            //rb.velocity = new Vector2(rb.velocity.x, rb.velocity.y);
-            //rb.AddForce(Vector2.up * JumpForce * Time.deltaTime, ForceMode2D.Force);
-            JumpTimeCounter = JumpTime;
-            rb.velocity = Vector2.up * 1200 * Time.fixedDeltaTime;
-        }
-
-         if ((rb.velocity.y > 0.2 && IsAir) && !IsTouchingFront || IsTouchingBack && IsAir)
-        {
-            if (JumpTimeCounter > 0)
-            {
-                //rb.velocity = Vector2.up * 1400 * Time.fixedDeltaTime;
-                JumpTimeCounter -= Time.deltaTime;
-                float jumpMultiplier = 3;
-                float t = JumpTimeCounter / JumpTime;
-                float currentJumpM = jumpMultiplier;
-
-                if(t>0.5f)
-                {
-                    currentJumpM = jumpMultiplier * (1 - t);
-                }
-                rb.velocity = Vector2.up * 1400 * Time.deltaTime;
-               
-            }
-            else
-            {
-                IsAir = false;
-            }
-        }
-
-         if (Input.GetKeyUp(KeyCode.Space))
-        {
-            IsAir = false;
-            JumpTimeCounter = 0;
-            if (rb.velocity.y > 0.2)
-            {
-                rb.velocity = new Vector2(rb.velocity.x, rb.velocity.y * .5f * Time.fixedDeltaTime);
-            }
-
-        }
-
-        //if (Input.GetKeyDown(KeyCode.Space) && IsGrounded)
-        //{
-        //    rb.velocity = new Vector2(rb.velocity.x, JumpForce);
-        //    IsAir = true;
-        //    Debug.Log("jump");
-        //}
-
-
-        //if(rb.velocity.y>0 && IsAir)
-        //{
-        //    JumpTimeCounter += Time.deltaTime;
-        //    if (JumpTimeCounter > JumpTime) IsAir = false;
-        //    float jumpMultiplier = 3;
-        //    float t = JumpTimeCounter / JumpTime;
-        //    float currentJumpM = jumpMultiplier;
-
-        //    if(t>0.5f)
-        //    {
-        //        currentJumpM = jumpMultiplier * (1 - t);
-        //    }
-        //    rb.velocity += new Vector2(rb.velocity.x, rb.velocity.y) * currentJumpM * Time.deltaTime;
-
-        //}
-        //if (Input.GetKeyUp(KeyCode.Space))
-        //{
-        //    IsAir = false;
-        //    JumpTimeCounter = 0;
-        //    if (rb.velocity.y > 0.2)
-        //    {
-        //        rb.velocity = new Vector2(rb.velocity.x, rb.velocity.y * .5f * Time.fixedDeltaTime);
-        //    }
-        //}
-        Debug.Log(rb.velocity);
-        /* if (Input.GetKey(KeyCode.Space) && !IsAttach)
-         {
-             rb.velocity = Vector2.up * 30;
-             AirTime -= Time.deltaTime;
-             //rb.AddForce(new Vector2(0f, 100f));
-         }
-         else if (Input.GetKeyUp(KeyCode.Space))
-         {
-             if (rb.velocity.y > 0.2)
-             {
-                 rb.velocity = new Vector2(rb.velocity.x, rb.velocity.y * .5f * Time.deltaTime);
-                 //rb.AddForce(new Vector2(0f, 1000f * 0.5f));
-             }
-         }*/
-        ani.SetBool("IsGrounded", IsGrounded);
-        if (IsGrounded && (MoveInput > 0 || MoveInput < 0))
-        {
-            AirTime = AirTimeStart;
-            CreatDust();
-        }
-
-        if (rb.velocity.y < 0.2 && !IsAttach)
-        {
-            rb.velocity += Vector2.up * Physics2D.gravity.y * (fullGravity + 2) * Time.deltaTime;
-            ani.SetBool("Up", false);
-        }
-        if (rb.velocity.y > 0.2 && !IsAttach)
-        {
-            rb.velocity += Vector2.up * Physics2D.gravity.y * (fullGravity) * Time.deltaTime;
-            ani.SetBool("Up", true);
-        }
-        
-        if (!IsAttach)
-        {
-            transform.rotation = Quaternion.Euler(0, 0, 0);
-        }
-        if (rb.velocity.y < -Mathf.Abs(50))
-        {
-            rb.velocity = new Vector2(rb.velocity.x, Mathf.Clamp(rb.velocity.y, -Mathf.Abs(50), Mathf.Infinity));
-        }
-        /* else if(IsAttach && facingRight)
-         {
-            // Rotation = Mathf.Clamp(Rotation, 15, -40);
-             transform.rotation = Quaternion.Euler(new Vector3(transform.eulerAngles.x, transform.eulerAngles.y, RightRotation));
-         }
-         else if (IsAttach && !facingRight)
-         {
-
-             transform.rotation = Quaternion.Euler(new Vector3(transform.eulerAngles.x, transform.eulerAngles.y, RightRotation));
-         }*/
-        
-
-    }
-    private void AirControl()
-    {
-
-       /* if (!IsGrounded && facingRight && MoveInput > 0 && !IsAttach)
-        {
-            rb.velocity = new Vector2(1 * 1000 * Time.deltaTime, rb.velocity.y);
-        }
-        if (!IsGrounded && !facingRight && MoveInput > 0 && !IsAttach)
-        {
-            rb.velocity = new Vector2(1 * 150 * Time.deltaTime, rb.velocity.y);
-        }
-        if (!IsGrounded && !facingRight && MoveInput < 0 && !IsAttach)
-        {
-                rb.velocity = new Vector2(-1 * 1000 * Time.deltaTime, rb.velocity.y);
-        }
-        if (!IsGrounded && facingRight && MoveInput < 0 && !IsAttach)
-        {
-            rb.velocity = new Vector2(-1 * 150 * Time.deltaTime, rb.velocity.y);
-        }*/
-       if(!IsGrounded && (MoveInput > 0 || MoveInput < 0) && !IsAttach)
-        {
-            rb.velocity = new Vector2(MoveInput * Speed * Time.fixedDeltaTime, rb.velocity.y);
-        }
-        if (IsAttach && MoveInput > 0 && Input.GetKeyDown(KeyCode.Space) && facingRight)
-        {
-            rb.velocity = new Vector2(MoveInput * Speed * Time.fixedDeltaTime, rb.velocity.y);
-            //rb.AddForce(Vector2.up * JumpForce, ForceMode2D.Impulse);
-        
-            Detach();
-        }
-        if (IsAttach && MoveInput > 0 && Input.GetKeyDown(KeyCode.Space) && !facingRight)
-        {
-            rb.velocity = new Vector2(MoveInput * Speed * Time.fixedDeltaTime, rb.velocity.y);
-            //rb.AddForce(Vector2.up * JumpForce, ForceMode2D.Impulse);
-           
-            //Flip();
-            Detach();
-        }
-        if (IsAttach && MoveInput < 0 && Input.GetKeyDown(KeyCode.Space) && !facingRight)
-        {
-            rb.velocity = new Vector2(MoveInput * Speed * Time.fixedDeltaTime, rb.velocity.y);
-            //rb.AddForce(Vector2.up * JumpForce, ForceMode2D.Impulse);
-           
-            Detach();
-        }
-        if (IsAttach && MoveInput < 0 && Input.GetKeyDown(KeyCode.Space) && facingRight)
-        {
-            rb.velocity = new Vector2(MoveInput * Speed * Time.fixedDeltaTime, rb.velocity.y);
-            //rb.AddForce(Vector2.up * JumpForce, ForceMode2D.Impulse);
-           
-            //Flip();
-            Detach();
-        }
-
-    }
+   
     private void OnDrawGizmos()
     {
         Gizmos.color = Color.green;
@@ -620,6 +607,7 @@ public class PlayerController : MonoBehaviour
     }
     public void PushPull()
     {
+        float MoveInput = playerInput.MoveInput;
         BoxHit = Physics2D.Raycast(transform.position, Vector2.right * (transform.localScale.x * 0.5f), 0.5f, WhatIsBox);
         if (BoxHit.collider && !IsPushing && Input.GetKeyDown(KeyCode.E) && IsGrounded)
         {
